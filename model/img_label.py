@@ -56,8 +56,6 @@ labels = np.array(labels)
 lb = LabelBinarizer()
 labels_mat = lb.fit_transform(labels)
 
-print(f"The first one hot encoded labels: {labels_mat[0]}")
-print(f"Mapping an one hot encoded label to its category: {lb.classes_[0]}")
 print(f"Total instances: {len(labels_mat)}")
 for i in range(len(labels_mat)):
     index = np.argmax(labels_mat[i])

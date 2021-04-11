@@ -129,6 +129,7 @@ def main():
     target_ct = 2000
     img_size = 256
     test_size = 0.2
+    batch_size = 32
     data_path = "../data/input/data.csv"
 
     # whether to collapse 'incorrect' labels into a single class
@@ -161,8 +162,8 @@ def main():
     train_data = ImageDataset(xtrain, ytrain, img_size=256, train=True)
     test_data = ImageDataset(xtest, ytest, img_size=256, train=False)
 
-    trainloader = DataLoader(train_data, batch_size=32, shuffle=True)
-    testloader = DataLoader(test_data, batch_size=32, shuffle=False)
+    trainloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    testloader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
 
     print("Loading label binarizer...")
     lb = joblib.load("../data/input/lb.pkl")
