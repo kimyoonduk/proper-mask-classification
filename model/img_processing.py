@@ -128,6 +128,7 @@ def main():
     seed_everything(SEED=SEED)
     target_ct = 2000
     img_size = 256
+    test_size = 0.2
     data_path = "../data/input/data.csv"
 
     # whether to collapse 'incorrect' labels into a single class
@@ -154,7 +155,7 @@ def main():
     y = df.target.values
 
     (xtrain, xtest, ytrain, ytest) = train_test_split(
-        X, y, test_size=0.25, random_state=42
+        X, y, test_size=test_size, random_state=SEED
     )
 
     train_data = ImageDataset(xtrain, ytrain, img_size=256, train=True)
