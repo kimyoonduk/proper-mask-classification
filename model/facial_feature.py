@@ -9,19 +9,6 @@ import random
 import torch
 from PIL import Image, ImageDraw
 
-import albumentations
-import matplotlib.pyplot as plt
-import argparse
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-import time
-from torchvision import models as models
-from sklearn.model_selection import train_test_split
-from torch.utils.data import Dataset, DataLoader
-
-# reference: https://debuggercafe.com/creating-efficient-image-data-loaders-in-pytorch-for-deep-learning/
-
 
 def seed_everything(SEED=1337):
     random.seed(SEED)
