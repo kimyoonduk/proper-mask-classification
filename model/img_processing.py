@@ -75,12 +75,11 @@ def norm_mean_std(X):
 
 # image dataset module
 class ImageDataset(Dataset):
-
-    # precomputed values for image normalization
-    img_means = [0.51301875, 0.44899824, 0.41649291]
-    img_stds = [0.27698997, 0.2698992, 0.2874688]
-
     def __init__(self, path, labels, img_size, train=True):
+        # precomputed values for image normalization
+        self.img_means = [0.51301875, 0.44899824, 0.41649291]
+        self.img_stds = [0.27698997, 0.2698992, 0.2874688]
+
         self.X = path
         self.y = labels
         # apply augmentations
@@ -93,7 +92,7 @@ class ImageDataset(Dataset):
                         shift_limit=0.3, scale_limit=0.3, rotate_limit=30, p=1.0
                     ),
                     albumentations.Normalize(
-                        mean=img_means, std=img_stds, always_apply=True
+                        mean=self.img_means, std=self.img_stds, always_apply=True
                     ),
                 ]
             )
@@ -102,7 +101,7 @@ class ImageDataset(Dataset):
                 [
                     albumentations.Resize(img_size, img_size, always_apply=True),
                     albumentations.Normalize(
-                        mean=img_means, std=img_stds, always_apply=True
+                        mean=self.img_means, std=self.img_stds, always_apply=True
                     ),
                 ]
             )
