@@ -1,5 +1,5 @@
 data/img/
-data/kaggle/
+data/old/
 *.DS_Store
 
 # Byte-compiled / optimized / DLL files
