@@ -2,7 +2,6 @@ import pandas as pd
 import os
 import numpy as np
 import joblib
-from tqdm import tqdm
 
 import torch
 import random
@@ -121,10 +120,9 @@ def main():
     # set variables
     SEED = 1337
     seed_everything(SEED=SEED)
-    target_ct = 2000
     img_size = 256
     test_size = 0.2
-    batch_size = 32
+    batch_size = 4
     data_path = "../data/input/data.csv"
 
     # set computation device
@@ -141,8 +139,8 @@ def main():
         X, y, test_size=test_size, random_state=SEED
     )
 
-    train_data = ImageDataset(xtrain, ytrain, img_size=256, train=True)
-    test_data = ImageDataset(xtest, ytest, img_size=256, train=False)
+    train_data = ImageDataset(xtrain, ytrain, img_size=img_size, train=True)
+    test_data = ImageDataset(xtest, ytest, img_size=img_size, train=False)
 
     trainloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     testloader = DataLoader(test_data, batch_size=batch_size, shuffle=False)

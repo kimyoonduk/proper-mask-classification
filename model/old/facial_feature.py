@@ -73,6 +73,7 @@ def main():
                 print(f"More than one face: {file_path}, defaulting to first..")
         else:
             face_landmarks = []
+            face_encodings = []
             print(f"No faces detected: {file_path}")
 
         file_path_col.append(file_path)
