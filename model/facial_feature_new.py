@@ -10,6 +10,7 @@ import random
 import torch
 from PIL import Image, ImageDraw
 import matplotlib.pyplot as plt
+import math
 
 
 data_path = "../data/input/data.csv"
@@ -74,11 +75,25 @@ def get_dlib_encoding(X, img_size):
     enc_df.to_pickle("../data/input/dlib_encodings.pickle")
 
 
+def update_dlib(dlib_path):
+    ddf = pd.read_pickle(dlib_path)
+
+    dlib_encoding = []
+    for enc in ddf["face_encodings_col"]:
+        if len(enc) == 0:
+            dlib_encoding.append(np.zeros((128,)))
+        else:
+            dlib_encoding.append(enc)
+
+    ddf["dlib_encoding_input"] = dlib_encoding
+    ddf.to_pickle("../data/input/dlib_encodings_v2.pickle")
+
+
 def get_top_n(feature_array, n):
     boxes = feature_array[0]
-    if len(boxes) == 0:
-        # return np.asarray([[-1, -1, -1, -1]] * n)
-        return np.nan
+    if len(boxes) < n:
+        return np.asarray([[0, 0, 0, 0]] * n)
+        # return np.nan
     detect_counts = feature_array[1].flatten()
 
     top_indices = detect_counts.argsort()[(-1) * n :][::-1]
@@ -103,7 +118,8 @@ def get_haar_features(X, img_size):
     mouth_model = cv2.CascadeClassifier("./haar_embeddings/mouth2.xml")
 
     file_path_col = []
-    num_faces_col = []
+    # num_faces_col = []
+    is_face_col = []
     face_col = []
     eyes_col = []
     nose_col = []
@@ -117,20 +133,63 @@ def get_haar_features(X, img_size):
         # returns a list of (x,y,w,h) tuples
 
         faces = face_model.detectMultiScale2(img, scaleFactor=1.1, minNeighbors=3)
-        eyes = eye_model.detectMultiScale2(img, scaleFactor=1.1, minNeighbors=4)
-        noses = nose_model.detectMultiScale2(img, scaleFactor=1.1, minNeighbors=6)
-        mouths = mouth_model.detectMultiScale2(img, scaleFactor=1.1, minNeighbors=8)
 
         num_faces = len(faces[0])
+        is_face = 1 if num_faces > 0 else 0
+        face_box = get_top_n(faces, 1)
+
+        # if face exists, only detect nose and mouth inside the facial area
+        if num_faces > 0:
+
+            (fX, fY, fW, fH) = face_box[0]
+
+            face_img = img[fY : fY + fH, fX : fX + fW]
+            noses = nose_model.detectMultiScale2(
+                face_img, scaleFactor=1.1, minNeighbors=6
+            )
+            eyes = eye_model.detectMultiScale2(
+                face_img, scaleFactor=1.1, minNeighbors=4
+            )
+
+            # only try to find mouth at the bottom half of the face
+            face_bottom = img[fY + math.floor(fH / 2) : fY + fH, fX : fX + fW]
+            mouths = mouth_model.detectMultiScale2(
+                face_bottom, scaleFactor=1.1, minNeighbors=8
+            )
+
+            nose_box = get_top_n(noses, 1)
+            mouth_box = get_top_n(mouths, 1)
+            eye_box = get_top_n(eyes, 2)
+
+            # adjust position of nose eyes and mouth box
+            nose_box = nose_box + np.asarray([[fX, fY, 0, 0]])
+            eye_box = eye_box + np.asarray([[fX, fY, 0, 0], [fX, fY, 0, 0]])
+            mouth_box = mouth_box + np.asarray([[fX, fY + math.floor(fH / 2), 0, 0]])
+
+        else:
+
+            # try to find eyes and nose anywhere inside the image
+            noses = nose_model.detectMultiScale2(img, scaleFactor=1.1, minNeighbors=6)
+            eyes = eye_model.detectMultiScale2(img, scaleFactor=1.1, minNeighbors=4)
+
+            # try to find a mouth at the bottom half of the image
+            img_bottom = img[math.floor(img_size / 2) : img_size, 0:img_size]
+            mouths = mouth_model.detectMultiScale2(
+                img_bottom, scaleFactor=1.1, minNeighbors=8
+            )
+
+            nose_box = get_top_n(noses, 1)
+            mouth_box = get_top_n(mouths, 1)
+            eye_box = get_top_n(eyes, 2)
+
+            # adjust position of mouth box
+            mouth_box = mouth_box + np.asarray([[0, math.floor(img_size / 2), 0, 0]])
 
         # get specified number of features
-        face_box = get_top_n(faces, 1)
-        eye_box = get_top_n(eyes, 2)
-        nose_box = get_top_n(noses, 1)
-        mouth_box = get_top_n(mouths, 1)
 
-        file_path_col.append(file_path)
-        num_faces_col.append(num_faces)
+        file_path_col.append(img_path)
+        # num_faces_col.append(num_faces)
+        is_face_col.append(is_face)
         face_col.append(face_box)
         eyes_col.append(eye_box)
         nose_col.append(nose_box)
@@ -138,7 +197,8 @@ def get_haar_features(X, img_size):
 
     encodings = {
         "file_path": file_path_col,
-        "num_faces": num_faces_col,
+        # "num_faces": num_faces_col,
+        "is_face": is_face_col,
         "face": face_col,
         "eyes": eyes_col,
         "nose": nose_col,
@@ -147,7 +207,7 @@ def get_haar_features(X, img_size):
 
     enc_df = pd.DataFrame.from_dict(encodings)
     enc_df.index = [path.split("/")[-1].split(".")[0] for path in enc_df["file_path"]]
-    enc_df.to_pickle("../data/input/haar_encodings.pickle")
+    enc_df.to_pickle("../data/input/haar_encodings_v2.pickle")
 
     # VISUALIZATION ##
     # out_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
@@ -160,5 +220,5 @@ def get_haar_features(X, img_size):
     # for (x, y, w, h) in mouths[0]:
     #     cv2.rectangle(out_img, (x, y), (x + w, y + h), (255, 0, 0), 1)
     # plt.figure(figsize=(12, 12))
-    # plt.imshow(out_img)
+    # plt.imshow(img_bottom)
 
