@@ -1,3 +1,4 @@
+import cv2
 import pandas as pd
 import os
 import numpy as np
@@ -8,40 +9,18 @@ import face_recognition
 import random
 import torch
 from PIL import Image, ImageDraw
+import matplotlib.pyplot as plt
+import math
 
 
-def seed_everything(SEED=1337):
-    random.seed(SEED)
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
-    torch.cuda.manual_seed(SEED)
-    torch.cuda.manual_seed_all(SEED)
-    torch.backends.cudnn.benchmark = True
+data_path = "../data/input/data.csv"
+df = pd.read_csv(data_path)
+X = df.image_path.values
+
+img_size = 256
 
 
-def main():
-
-    # set variables
-    SEED = 1337
-    seed_everything(SEED=SEED)
-    target_ct = 2000
-    img_size = 256
-    test_size = 0.2
-    batch_size = 32
-    data_path = "../data/input/data.csv"
-
-    # set computation device
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    print(f"Computation device: {device}")
-
-    # read the data.csv file and get the image paths and labels
-    df = pd.read_csv(data_path)
-    # X = df.image_path.values
-    # y = df.target.values
-    # lb = joblib.load("../data/input/lb.pkl")
-    # print(lb.classes_)
-
-    X = df.image_path.values
+def get_dlib_encoding(X, img_size):
 
     file_path_col = []
     face_locations_col = []
@@ -52,16 +31,16 @@ def main():
 
     for i, img_path in tqdm.tqdm(enumerate(X), total=len(X)):
         # print(X)
-        # file_path = img_dir + img_path.split('/img/')[1]
         file_path = img_path
-        try:
-            face_img = face_recognition.load_image_file(file_path)
-        except FileNotFoundError:
-            print(f"File Not Found: {file_path}")
-            missing_img.append(file_path)
+        im = Image.open(file_path)
+        im = im.convert("RGB")
+        im = im.resize((img_size, img_size))
+        face_img = np.array(im)
+
         face_locations = face_recognition.face_locations(face_img)
         num_faces = len(face_locations)
 
+        # if more than one faces are detected, only the first is returned by default
         if num_faces > 0:
             face_landmarks = face_recognition.face_landmarks(
                 face_img, face_locations=face_locations, model="large"
@@ -69,6 +48,7 @@ def main():
             face_encodings = face_recognition.face_encodings(
                 face_img, known_face_locations=face_locations, model="large"
             )[0]
+            face_locations = face_locations[0]
             if num_faces > 1:
                 print(f"More than one face: {file_path}, defaulting to first..")
         else:
@@ -83,29 +63,157 @@ def main():
         face_encodings_col.append(face_encodings)
 
     encodings = {
-        "file_path_col": file_path_col,
-        "face_locations_col": face_locations_col,
-        "num_faces_col": num_faces_col,
-        "face_landmarks_col": face_landmarks_col,
-        "face_encodings_col": face_encodings_col,
+        "file_path": file_path_col,
+        "face_locations": face_locations_col,
+        "num_faces": num_faces_col,
+        "face_landmarks": face_landmarks_col,
+        "face_encodings": face_encodings_col,
     }
 
     enc_df = pd.DataFrame.from_dict(encodings)
-    enc_df.to_pickle("/content/drive/MyDrive/cis522/encodings.pickle")
+    enc_df.index = [path.split("/")[-1].split(".")[0] for path in enc_df["file_path"]]
+    enc_df.to_pickle("../data/input/dlib_encodings.pickle")
 
-    ## VISUALIZATION ##
 
-    correct_mask = X[y == 1]
+def update_dlib(dlib_path):
+    ddf = pd.read_pickle(dlib_path)
 
-    # example: no recognized face
-    # sunglass_and_mask = correct_mask[1]
-
-    mask_img = face_recognition.load_image_file(correct_mask[2])
-    pil_image = Image.fromarray(mask_img)
-    d = ImageDraw.Draw(pil_image, "RGBA")
-
-    for feature in face_landmarks.keys():
-        if feature in ["chin", "nose_bridge"]:
-            d.line(face_landmarks[feature], fill=(150, 0, 0, 180), width=5)
+    dlib_encoding = []
+    for enc in ddf["face_encodings_col"]:
+        if len(enc) == 0:
+            dlib_encoding.append(np.zeros((128,)))
         else:
-            d.polygon(face_landmarks[feature], fill=(0, 180, 0, 128))
+            dlib_encoding.append(enc)
+
+    ddf["dlib_encoding_input"] = dlib_encoding
+    ddf.to_pickle("../data/input/dlib_encodings_v2.pickle")
+
+
+# helper function for getting the top n results from the haar matches
+def get_top_n(feature_array, n):
+    boxes = feature_array[0]
+    if len(boxes) < n:
+        return np.asarray([[0, 0, 0, 0]] * n)
+        # return np.nan
+    detect_counts = feature_array[1].flatten()
+
+    top_indices = detect_counts.argsort()[(-1) * n :][::-1]
+    top_boxes = boxes[top_indices]
+
+    return top_boxes
+
+
+def get_haar_features(X, img_size):
+
+    face_model = cv2.CascadeClassifier(
+        "./haar_embeddings/haarcascade_frontalface_default.xml"
+    )
+    eye_model = cv2.CascadeClassifier("./haar_embeddings/haarcascade_eye.xml")
+    nose_model = cv2.CascadeClassifier("./haar_embeddings/haarcascade_mcs_nose.xml")
+    mouth_model = cv2.CascadeClassifier("./haar_embeddings/mouth2.xml")
+
+    file_path_col = []
+    # num_faces_col = []
+    is_face_col = []
+    face_col = []
+    eyes_col = []
+    nose_col = []
+    mouth_col = []
+
+    for img_path in X:
+        img = cv2.imread(img_path)
+        img = cv2.cvtColor(img, cv2.IMREAD_GRAYSCALE)
+        img = cv2.resize(img, (img_size, img_size), interpolation=cv2.INTER_AREA)
+
+        # returns a list of (x,y,w,h) tuples
+
+        faces = face_model.detectMultiScale2(img, scaleFactor=1.1, minNeighbors=3)
+
+        num_faces = len(faces[0])
+        is_face = 1 if num_faces > 0 else 0
+        face_box = get_top_n(faces, 1)
+
+        # if face exists, only detect nose and mouth inside the facial area
+        if num_faces > 0:
+
+            (fX, fY, fW, fH) = face_box[0]
+
+            face_img = img[fY : fY + fH, fX : fX + fW]
+            noses = nose_model.detectMultiScale2(
+                face_img, scaleFactor=1.1, minNeighbors=6
+            )
+            eyes = eye_model.detectMultiScale2(
+                face_img, scaleFactor=1.1, minNeighbors=4
+            )
+
+            # only try to find mouth at the bottom half of the face
+            face_bottom = img[fY + math.floor(fH / 2) : fY + fH, fX : fX + fW]
+            mouths = mouth_model.detectMultiScale2(
+                face_bottom, scaleFactor=1.1, minNeighbors=8
+            )
+
+            nose_box = get_top_n(noses, 1)
+            mouth_box = get_top_n(mouths, 1)
+            eye_box = get_top_n(eyes, 2)
+
+            # adjust position of nose eyes and mouth box
+            nose_box = nose_box + np.asarray([[fX, fY, 0, 0]])
+            eye_box = eye_box + np.asarray([[fX, fY, 0, 0], [fX, fY, 0, 0]])
+            mouth_box = mouth_box + np.asarray([[fX, fY + math.floor(fH / 2), 0, 0]])
+
+        else:
+
+            # try to find eyes and nose anywhere inside the image
+            noses = nose_model.detectMultiScale2(img, scaleFactor=1.1, minNeighbors=6)
+            eyes = eye_model.detectMultiScale2(img, scaleFactor=1.1, minNeighbors=4)
+
+            # try to find a mouth at the bottom half of the image
+            img_bottom = img[math.floor(img_size / 2) : img_size, 0:img_size]
+            mouths = mouth_model.detectMultiScale2(
+                img_bottom, scaleFactor=1.1, minNeighbors=8
+            )
+
+            nose_box = get_top_n(noses, 1)
+            mouth_box = get_top_n(mouths, 1)
+            eye_box = get_top_n(eyes, 2)
+
+            # adjust position of mouth box
+            mouth_box = mouth_box + np.asarray([[0, math.floor(img_size / 2), 0, 0]])
+
+        # get specified number of features
+
+        file_path_col.append(img_path)
+        # num_faces_col.append(num_faces)
+        is_face_col.append(is_face)
+        face_col.append(face_box)
+        eyes_col.append(eye_box)
+        nose_col.append(nose_box)
+        mouth_col.append(mouth_box)
+
+    encodings = {
+        "file_path": file_path_col,
+        # "num_faces": num_faces_col,
+        "is_face": is_face_col,
+        "face": face_col,
+        "eyes": eyes_col,
+        "nose": nose_col,
+        "mouth": mouth_col,
+    }
+
+    enc_df = pd.DataFrame.from_dict(encodings)
+    enc_df.index = [path.split("/")[-1].split(".")[0] for path in enc_df["file_path"]]
+    enc_df.to_pickle("../data/input/haar_encodings_v2.pickle")
+
+    # VISUALIZATION ##
+    # out_img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    # for (x, y, w, h) in faces[0]:
+    #     cv2.rectangle(out_img, (x, y), (x + w, y + h), (0, 0, 255), 1)
+    # for (x, y, w, h) in noses[0]:
+    #     cv2.rectangle(out_img, (x, y), (x + w, y + h), (255, 0, 255), 1)
+    # for (x, y, w, h) in eyes[0]:
+    #     cv2.rectangle(out_img, (x, y), (x + w, y + h), (0, 255, 0), 1)
+    # for (x, y, w, h) in mouths[0]:
+    #     cv2.rectangle(out_img, (x, y), (x + w, y + h), (255, 0, 0), 1)
+    # plt.figure(figsize=(12, 12))
+    # plt.imshow(img_bottom)
+
